@@ -3,9 +3,9 @@ title: "Machine Learning 2 -  Homework 1"
 author: "Tamas Koncz"
 date: '2018-03-19'
 output:
-  html_notebook:
-    df_print: paged
   html_document:
+    df_print: paged
+  html_notebook:
     df_print: paged
 ---
 
@@ -174,6 +174,7 @@ tune_Grid_gbm <- expand.grid(n.trees = c(100, 500, 1000),
                         shrinkage = c(0.005, 0.01, 0.1),
                         n.minobsinnode = c(5, 10))
   
+set.seed(93)
 gbm_025_fit <- train(Purchase ~ .,
                    method = "gbm",
                    metric = "ROC",
@@ -184,6 +185,7 @@ gbm_025_fit <- train(Purchase ~ .,
                    verbose = FALSE
                    )
 
+set.seed(93)
 gbm_050_fit <- train(Purchase ~ .,
                    method = "gbm",
                    metric = "ROC",
@@ -194,6 +196,7 @@ gbm_050_fit <- train(Purchase ~ .,
                    verbose = FALSE
                    )
 
+set.seed(93)
 gbm_075_fit <- train(Purchase ~ .,
                    method = "gbm",
                    metric = "ROC",
@@ -207,32 +210,73 @@ gbm_075_fit <- train(Purchase ~ .,
 
 XGBoost:
 ```{r}
-
+tune_Grid_xgb <- expand.grid(nrounds = c(500, 1000), max_depth = c(2, 3, 5),
+                             eta = c(0.01, 0.05), gamma = 0,
+                             colsample_bytree = c(0.5, 0.7), min_child_weight = 1, 
+                             subsample = c(0.5))
+set.seed(93)
+xgboost_fit <- train(Purchase ~ .,
+                      method = "xgbTree",
+                      metric = "ROC",
+                      data = data_train,
+                      trControl = train_Control,
+                      tuneGrid = tune_Grid_xgb)
+xgboost_fit
 ```
 
 #### b) Compare different models with the resamples function (make sure to set the same seed before model training for all 3 models). Is any of these giving significantly different predictive power than the others?  
 
-```{r}
+```{r, fig.width=15, fig.height=6}
 resamples_object <- resamples(list("rpart" = rpart_fit,
                                    "rf - 100" = rf_100_fit,
                                    "rf - 250" = rf_250_fit,
                                    "rf - 500" = rf_500_fit,
                                    "gbm = .25" = gbm_025_fit,
                                    "gbm = .50" = gbm_050_fit,
-                                   "gbm = .75" = gbm_075_fit))
+                                   "gbm = .75" = gbm_075_fit,
+                                   "xgboost" = xgboost_fit))
 ##TODO: come up with a nice viz...
 resamples_object$values %>%
   tidyr::gather(key= "Resample", factor_key = F) %>%
   setnames(c("Fold", "Model~Metric", "Value")) %>%
-  mutate(model = str_split(`Model~Metric`, "~", simplify = T)[1],
-         metric = str_split(`Model~Metric`, "~", simplify = T)[[2]])
-  
-?split
-?gather
+  mutate(model = str_split(`Model~Metric`, "~", simplify = T)[,1],
+         metric = str_split(`Model~Metric`, "~", simplify = T)[,2]) %>%
+  mutate(model = factor(model, levels = c("rpart", 
+                                          "rf - 100", "rf - 250", "rf - 500",
+                                          "gbm = .25", "gbm = .50", "gbm = .75", 
+                                          "xgboost"))) %>%
+  ggplot(aes(x= model, y= Value, fill = model)) +
+    geom_boxplot() +
+    facet_grid(~metric)
+
 ```
 
 
 #### c) Choose the best model and plot ROC curve for the best model on the test set. Calculate and interpret AUC.  
+
+```{r}
+test_prob_rpart <- predict.train(rpart_fit, newdata = data_test, type = "prob")
+test_pred_rpart <- prediction(test_prob_rpart$MM, data_test[["Purchase"]])
+
+rpart_perf <- performance(test_pred_rpart, measure = "tpr", x.measure = "fpr")
+
+rpart_roc_df <- data.table(
+  model = "rpart",
+  FPR = rpart_perf@x.values[[1]],
+  TPR = rpart_perf@y.values[[1]],
+  cutoff = rpart_perf@alpha.values[[1]]
+)
+
+#roc_df <- rbind(glm_roc_df, glmnet_roc_df)
+
+ggplot(rpart_roc_df) +
+  geom_line(aes(FPR, TPR, color = model), size = 2) +
+  geom_abline(intercept = 0, slope = 1,  linetype = "dotted", col = "black") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
+  xlab("False Positive Rate") + ylab("True Positive Rate")
+```
+
 
 #### d) Inspect variable importance plots for the 3 models. Are similar variables found to be the most important for the 3 models?  
 
