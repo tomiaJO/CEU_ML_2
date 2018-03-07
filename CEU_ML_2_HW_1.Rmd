@@ -1,0 +1,118 @@
+---
+title: "Machine Learning 2 -  Homework 1"
+author: "Tamas Koncz"
+date: '2018-03-19'
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    df_print: paged
+---
+
+```{r, include=FALSE}
+library(data.table)
+library(dplyr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(xgboost)
+library(randomForest)
+library(gbm)
+library(ISLR)
+library(skimr)
+library(ROCR)
+
+options(scipen = 999)
+theme_set(theme_bw())
+```
+
+### 1. Classification tree model (3 points)  
+```{r}
+data <- data.table(OJ)
+```
+
+A glimpse at the variables we will be working with:
+```{r}
+glimpse(data)
+```
+
+
+#### a) Create a training data of 75% and keep 25% of the data as a test set.  
+
+```{r}
+training_ratio <- 0.75
+
+set.seed(93)
+train_indices <- createDataPartition(y = data[["Purchase"]],
+                                     times = 1,
+                                     p = training_ratio,
+                                     list = FALSE)
+data_train <- data[train_indices, ]
+data_test <- data[-train_indices, ]
+```
+
+#### b) Build a classification tree, determining the optimal complexity parameter via 10-fold cross validation.  
+#####    • Use values for the complexity parameter ranging between 0.001 and 0.1.  
+#####    • the selection criterion should be based on AUC  
+#####    • Use the “one standard error” rule to select the final model  
+
+```{r}
+train_Control <- trainControl(method = "CV",
+                              number = 10,
+                              classProbs = TRUE,
+                              summaryFunction = twoClassSummary)
+
+tune_Grid <- data.frame(cp = seq(from = 0.001, to = 0.1, by= 0.001))
+
+set.seed(93)
+rpart_fit <- train(Purchase ~ .,
+                   data = data_train,
+                   method = "rpart",
+                   metric = "ROC",
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid)
+```
+
+```{r}
+rpart_fit
+```
+
+```{r}
+ggplot(rpart_fit)
+```
+
+#### c) Plot the final model and interpret the result. How would you predict a new observation?  
+  
+```{r}
+rpart.plot(rpart_fit[["finalModel"]])
+```  
+
+#### d) Evaluate the final model on the test set. Is the AUC close to what we got via cross-validation?  
+```{r}
+test_prob_rpart <- predict.train(rpart_fit, newdata = data_test, type = "prob")
+test_pred_rpart <- prediction(test_prob_rpart$MM, data_test[["Purchase"]])
+
+rpart_perf <- performance(test_pred_rpart, measure = "tpr", x.measure = "fpr")
+
+rpart_roc_df <- data.table(
+  model = "rpart",
+  FPR = rpart_perf@x.values[[1]],
+  TPR = rpart_perf@y.values[[1]],
+  cutoff = rpart_perf@alpha.values[[1]]
+)
+
+#roc_df <- rbind(glm_roc_df, glmnet_roc_df)
+
+ggplot(rpart_roc_df) +
+  geom_line(aes(FPR, TPR, color = model), size = 2) +
+  geom_abline(intercept = 0, slope = 1,  linetype = "dotted", col = "black") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
+  xlab("False Positive Rate") + ylab("True Positive Rate")
+```
+
+
+
+### 2. Tree ensemble models (6 points)
+### 3. Variable importance profiles (4 points)
+
