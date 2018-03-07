@@ -3,15 +3,16 @@ title: "Machine Learning 2 -  Homework 1"
 author: "Tamas Koncz"
 date: '2018-03-19'
 output:
-  html_document:
-    df_print: paged
   html_notebook:
+    df_print: paged
+  html_document:
     df_print: paged
 ---
 
 ```{r, include=FALSE}
 library(data.table)
 library(dplyr)
+library(stringr)
 library(caret)
 library(rpart)
 library(rpart.plot)
@@ -60,9 +61,11 @@ data_test <- data[-train_indices, ]
 train_Control <- trainControl(method = "CV",
                               number = 10,
                               classProbs = TRUE,
-                              summaryFunction = twoClassSummary)
+                              summaryFunction = twoClassSummary,
+                              selectionFunction = "oneSE")
 
-tune_Grid <- data.frame(cp = seq(from = 0.001, to = 0.1, by= 0.001))
+tune_Grid_rpart <- data.frame(cp = seq(from = 0.001, to = 0.1, by = 0.005))
+##I've shortened the tune_Grid so the results can be printed and still read.. the final model is the same.
 
 set.seed(93)
 rpart_fit <- train(Purchase ~ .,
@@ -70,7 +73,7 @@ rpart_fit <- train(Purchase ~ .,
                    method = "rpart",
                    metric = "ROC",
                    trControl = train_Control,
-                   tuneGrid = tune_Grid)
+                   tuneGrid = tune_Grid_rpart)
 ```
 
 ```{r}
@@ -83,7 +86,7 @@ ggplot(rpart_fit)
 
 #### c) Plot the final model and interpret the result. How would you predict a new observation?  
   
-```{r}
+```{r, fig.width=15, fig.height=10}
 rpart.plot(rpart_fit[["finalModel"]])
 ```  
 
@@ -113,6 +116,141 @@ ggplot(rpart_roc_df) +
 
 
 
-### 2. Tree ensemble models (6 points)
+### 2. Tree ensemble models (6 points)  
+
+##### investigate tree ensemble models:
+#####     • random forest
+#####     • gradient boosting machine
+#####     • XGBoost  
+
+#### a) Try various tuning parameter combinations and select the best model using cross-validation. (This time when doing hyperparameter tuning, simply choose the best model instead of applying the oneSE rule.)  
+```{r}
+train_Control <- trainControl(method = "CV",
+                              number = 10,
+                              classProbs = TRUE,
+                              summaryFunction = twoClassSummary,
+                              selectionFunction = "best")
+```
+
+RF:
+```{r}
+tune_Grid_rf <- data.frame(mtry = c(2:7))
+
+set.seed(93)
+rf_100_fit <- train(Purchase ~ .,
+                   data = data_train,
+                   method = "rf",
+                   metric = "ROC",
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_rf,
+                   ntree = 100,
+                   importance = T)
+
+set.seed(93)
+rf_250_fit <- train(Purchase ~ .,
+                   data = data_train,
+                   method = "rf",
+                   metric = "ROC",
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_rf,
+                   ntree = 250,
+                   importance = T)
+
+set.seed(93)
+rf_500_fit <- train(Purchase ~ .,
+                   data = data_train,
+                   method = "rf",
+                   metric = "ROC",
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_rf ,
+                   ntree = 500,
+                   importance = T)
+```
+
+GBM:
+```{r}
+tune_Grid_gbm <- expand.grid(n.trees = c(100, 500, 1000), 
+                        interaction.depth = c(2, 3, 5), 
+                        shrinkage = c(0.005, 0.01, 0.1),
+                        n.minobsinnode = c(5, 10))
+  
+gbm_025_fit <- train(Purchase ~ .,
+                   method = "gbm",
+                   metric = "ROC",
+                   data = data_train,
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_gbm,
+                   bag.fraction = 0.25,
+                   verbose = FALSE
+                   )
+
+gbm_050_fit <- train(Purchase ~ .,
+                   method = "gbm",
+                   metric = "ROC",
+                   data = data_train,
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_gbm,
+                   bag.fraction = 0.50,
+                   verbose = FALSE
+                   )
+
+gbm_075_fit <- train(Purchase ~ .,
+                   method = "gbm",
+                   metric = "ROC",
+                   data = data_train,
+                   trControl = train_Control,
+                   tuneGrid = tune_Grid_gbm,
+                   bag.fraction = 0.75,
+                   verbose = FALSE
+                   )
+```
+
+XGBoost:
+```{r}
+
+```
+
+#### b) Compare different models with the resamples function (make sure to set the same seed before model training for all 3 models). Is any of these giving significantly different predictive power than the others?  
+
+```{r}
+resamples_object <- resamples(list("rpart" = rpart_fit,
+                                   "rf - 100" = rf_100_fit,
+                                   "rf - 250" = rf_250_fit,
+                                   "rf - 500" = rf_500_fit,
+                                   "gbm = .25" = gbm_025_fit,
+                                   "gbm = .50" = gbm_050_fit,
+                                   "gbm = .75" = gbm_075_fit))
+##TODO: come up with a nice viz...
+resamples_object$values %>%
+  tidyr::gather(key= "Resample", factor_key = F) %>%
+  setnames(c("Fold", "Model~Metric", "Value")) %>%
+  mutate(model = str_split(`Model~Metric`, "~", simplify = T)[1],
+         metric = str_split(`Model~Metric`, "~", simplify = T)[[2]])
+  
+?split
+?gather
+```
+
+
+#### c) Choose the best model and plot ROC curve for the best model on the test set. Calculate and interpret AUC.  
+
+#### d) Inspect variable importance plots for the 3 models. Are similar variables found to be the most important for the 3 models?  
+
 ### 3. Variable importance profiles (4 points)
 
+```{r}
+data <- data.table(Hitters)
+data <- data[!is.na(Salary)]
+data[, log_salary := log(Salary)]
+data[, Salary := NULL]
+```
+
+#### a) train two random forest models: one with mtry = 2 and another with mtry = 10 (use the whole dataset and don’t use cross-validation). Inspect variable importance profiles. What do you see in terms of how important the first few variables are relative to each other?
+#### b) One of them is more extreme in terms of how the most important and the next ones relate to each other. Give an intuitive explanation how mtry relates to relative importance of variables in random forest models.
+#### c) In the same vein, estimate two gbm models and set bag.fraction to 0.1 first and to 0.9 in the second.
+##### The tuneGrid should consist of the same values for the two models (a dataframe with one row):  
+#####     • n.trees = 500  
+#####     • interaction.depth = 5  
+#####     • shrinkage = 0.1  
+#####     • n.minobsinnode = 5  
+##### Compare variable importance plots for the two models. What is the meaning of bag.fraction? Based on this, why is one variable importance profile more extreme than the other?  
