@@ -124,6 +124,8 @@ ggplot(rpart_roc_df) +
 #####     • XGBoost  
 
 #### a) Try various tuning parameter combinations and select the best model using cross-validation. (This time when doing hyperparameter tuning, simply choose the best model instead of applying the oneSE rule.)  
+
+The updated trainControl function, to select the best model:
 ```{r}
 train_Control <- trainControl(method = "CV",
                               number = 10,
@@ -132,7 +134,9 @@ train_Control <- trainControl(method = "CV",
                               selectionFunction = "best")
 ```
 
-RF:
+Training random forest:   
+The tuning parameter is mtry, which represents how many variables are selected randomly for consideration at each splitting point.  
+Although ntree, the number of trees is not a tuning parameter in caret, we can pass it to train(...). I tried three variations for it as well.
 ```{r}
 tune_Grid_rf <- data.frame(mtry = c(2:7))
 
@@ -167,13 +171,23 @@ rf_500_fit <- train(Purchase ~ .,
                    importance = T)
 ```
 
-GBM:
+
+Gradient boosting machines there are 4 training parameters available:  
+    - number of iterations, i.e. trees, (called n.trees in the gbm function)  
+    - complexity of the tree, called interaction.depth  
+    - learning rate: how quickly the algorithm adapts, called shrinkage  
+    - the minimum number of training set samples in a node to commence splitting (n.minobsinnode)  
+    
+The scale of parameters I've used is relatively limited, so there might be better combinations - but I also tried to balance runtimes with the additional benefit from fitting more parameters. 
+
+There is one parameter that train(...) will take, but it's not part of the tuning grid in caret, bag.fraction, which controls randomness in the different fitted trees, by manipulating the number of observations used for the next fit.  
+Similarly to RF and ntrees, I've fitted three different  GBM models, with different bag.fraction parameters tried.
 ```{r}
-tune_Grid_gbm <- expand.grid(n.trees = c(100, 500, 1000), 
-                        interaction.depth = c(2, 3, 5), 
-                        shrinkage = c(0.005, 0.01, 0.1),
-                        n.minobsinnode = c(5, 10))
-  
+tune_Grid_gbm <- expand.grid(n.trees = c(100, 250, 500), 
+                             interaction.depth = c(2:7), 
+                             shrinkage = c(0.005, 0.01, 0.1),
+                             n.minobsinnode = c(5, 10))
+?gbm
 set.seed(93)
 gbm_025_fit <- train(Purchase ~ .,
                    method = "gbm",
@@ -210,10 +224,13 @@ gbm_075_fit <- train(Purchase ~ .,
 
 XGBoost:
 ```{r}
-tune_Grid_xgb <- expand.grid(nrounds = c(500, 1000), max_depth = c(2, 3, 5),
-                             eta = c(0.01, 0.05), gamma = 0,
-                             colsample_bytree = c(0.5, 0.7), min_child_weight = 1, 
-                             subsample = c(0.5))
+tune_Grid_xgb <- expand.grid(nrounds = 1000, 
+                             max_depth = c(2:7),
+                             eta = c(0.01, 0.05), 
+                             gamma = 0,
+                             colsample_bytree = c(0.5, 0.7), 
+                             min_child_weight = 1, 
+                             subsample = c(0.5, 0.75))
 set.seed(93)
 xgboost_fit <- train(Purchase ~ .,
                       method = "xgbTree",
@@ -221,7 +238,6 @@ xgboost_fit <- train(Purchase ~ .,
                       data = data_train,
                       trControl = train_Control,
                       tuneGrid = tune_Grid_xgb)
-xgboost_fit
 ```
 
 #### b) Compare different models with the resamples function (make sure to set the same seed before model training for all 3 models). Is any of these giving significantly different predictive power than the others?  
@@ -235,7 +251,7 @@ resamples_object <- resamples(list("rpart" = rpart_fit,
                                    "gbm = .50" = gbm_050_fit,
                                    "gbm = .75" = gbm_075_fit,
                                    "xgboost" = xgboost_fit))
-##TODO: come up with a nice viz...
+
 resamples_object$values %>%
   tidyr::gather(key= "Resample", factor_key = F) %>%
   setnames(c("Fold", "Model~Metric", "Value")) %>%
