@@ -3,9 +3,9 @@ title: "Machine Learning 2 -  Homework 1"
 author: "Tamas Koncz"
 date: '2018-03-19'
 output:
-  html_document:
-    df_print: paged
   html_notebook:
+    df_print: paged
+  html_document:
     df_print: paged
 ---
 
@@ -22,6 +22,7 @@ library(gbm)
 library(ISLR)
 library(skimr)
 library(ROCR)
+library(gridExtra)
 
 options(scipen = 999)
 theme_set(theme_bw())
@@ -34,7 +35,10 @@ data <- data.table(OJ)
 
 A glimpse at the variables we will be working with:
 ```{r}
-glimpse(data)
+skim(data)
+```
+```{r}
+data[, Purchase := factor(Purchase, levels = c("MM", "CH"))]
 ```
 
 
@@ -80,7 +84,10 @@ rpart_fit <- train(Purchase ~ .,
 rpart_fit
 ```
 
-```{r}
+cp = 0.006 was selected for the final model, based on the oneSE rule.  
+Below is a plot of CV'd AUC vs. the cp parameter:  
+
+```{r, fig.width=4, fig.height=4, fig.align='center'}
 ggplot(rpart_fit)
 ```
 
@@ -89,13 +96,17 @@ ggplot(rpart_fit)
 ```{r, fig.width=15, fig.height=10}
 rpart.plot(rpart_fit[["finalModel"]])
 ```  
+Each new prediction starts at the top of the tree.  
+At each step, the given predictor value for the node will decide if we go down right or left on the tree - this decision iterates until we reach a final node, for which the majority value (based on the training set) will be the prediction.  
+Alternatively, we could predict probabilities, by taking the % of the predicted class, rather than just the majority in the leaf.  
 
 #### d) Evaluate the final model on the test set. Is the AUC close to what we got via cross-validation?  
-```{r}
+```{r fig.width=6, fig.height=4, fig.align='center'}
 test_prob_rpart <- predict.train(rpart_fit, newdata = data_test, type = "prob")
 test_pred_rpart <- prediction(test_prob_rpart$MM, data_test[["Purchase"]])
 
 rpart_perf <- performance(test_pred_rpart, measure = "tpr", x.measure = "fpr")
+AUC <- performance(test_pred_rpart, "auc")@y.values[[1]]
 
 rpart_roc_df <- data.table(
   model = "rpart",
@@ -111,9 +122,11 @@ ggplot(rpart_roc_df) +
   geom_abline(intercept = 0, slope = 1,  linetype = "dotted", col = "black") +
   scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
   scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
-  xlab("False Positive Rate") + ylab("True Positive Rate")
+  labs(x= "False Positive Rate", y= "True Positive Rate",
+       title = paste("rpart ROC. AUC =", round(AUC,2), sep = " "))
 ```
 
+The AUC is virtually the same - 0.87, so we can argue that the results are stable.
 
 
 ### 2. Tree ensemble models (6 points)  
@@ -187,7 +200,7 @@ tune_Grid_gbm <- expand.grid(n.trees = c(100, 250, 500),
                              interaction.depth = c(2:7), 
                              shrinkage = c(0.005, 0.01, 0.1),
                              n.minobsinnode = c(5, 10))
-?gbm
+
 set.seed(93)
 gbm_025_fit <- train(Purchase ~ .,
                    method = "gbm",
@@ -266,35 +279,59 @@ resamples_object$values %>%
     facet_grid(~metric)
 
 ```
-
+There is not a huge difference between models if we evaulate based on purely AUC.  
+If we consider AUC together with Sensitivity and specificity as well, xgboost will provide the best ranges (across resamples) across all three measures, hence I've chosen it as the best model.
 
 #### c) Choose the best model and plot ROC curve for the best model on the test set. Calculate and interpret AUC.  
 
-```{r}
-test_prob_rpart <- predict.train(rpart_fit, newdata = data_test, type = "prob")
-test_pred_rpart <- prediction(test_prob_rpart$MM, data_test[["Purchase"]])
+```{r, fig.width=6, fig.height=4, fig.center = 'center'}
+test_prob_xgboost <- predict.train(xgboost_fit, newdata = data_test, type = "prob")
+test_pred_xgboost <- prediction(test_prob_xgboost$MM, data_test[["Purchase"]])
 
-rpart_perf <- performance(test_pred_rpart, measure = "tpr", x.measure = "fpr")
+xgboost_perf <- performance(test_pred_xgboost, measure = "tpr", x.measure = "fpr")
+AUC <- performance(test_pred_xgboost, "auc")@y.values[[1]]
 
-rpart_roc_df <- data.table(
-  model = "rpart",
-  FPR = rpart_perf@x.values[[1]],
-  TPR = rpart_perf@y.values[[1]],
-  cutoff = rpart_perf@alpha.values[[1]]
+xgboost_roc_df <- data.table(
+  model = "xgboost",
+  FPR = xgboost_perf@x.values[[1]],
+  TPR = xgboost_perf@y.values[[1]],
+  cutoff = xgboost_perf@alpha.values[[1]]
 )
 
-#roc_df <- rbind(glm_roc_df, glmnet_roc_df)
+roc_df <- rbind(rpart_roc_df, xgboost_roc_df)
 
-ggplot(rpart_roc_df) +
+ggplot(roc_df) +
   geom_line(aes(FPR, TPR, color = model), size = 2) +
   geom_abline(intercept = 0, slope = 1,  linetype = "dotted", col = "black") +
   scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
   scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, .1)) +
-  xlab("False Positive Rate") + ylab("True Positive Rate")
+  labs(x= "False Positive Rate", y= "True Positive Rate",
+       title = paste("xgboost ROC. AUC =", round(AUC,2), sep = " "))
 ```
-
+Interpretation for AUC score: if we take a random positive and a random negative case, there is a 0.89 probability that the classifier assigns a higher score to the positive case than to the negative.  
+  
+Above plot compares xgboost's ROC to rpart's. For most part the two are very similar, however xgboost clearly outperforms rpart in the 0.8-0.95 TPR range, where rpart is basically only able to pick up further TP-s with a random chance.    
 
 #### d) Inspect variable importance plots for the 3 models. Are similar variables found to be the most important for the 3 models?  
+
+```{r, fig.width=15, fig.height = 4, fig.align='center'}
+p1 <- varImp(rf_500_fit) %>%
+  ggplot() +
+  labs(title = "RF Variance importance plot\nntrees = 500")
+
+p2 <- varImp(gbm_075_fit) %>%
+  ggplot() +
+  labs(title = "GBM Variance importance plot\nbag.fraction = 0.75")
+
+p3 <- varImp(xgboost_fit) %>%
+  ggplot() +
+  labs(title = "XGBoost Variance importance plot\n")
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+LoyalCH (by a wide margin) and then PriceDiff are the two most important variables for all models.  
+Other variables vary in their importance - however, they are essentially meaningless.  
+Hence, with a slight simplification, we can argue that all three models have value the same variables to be important.  
 
 ### 3. Variable importance profiles (4 points)
 
@@ -306,11 +343,133 @@ data[, Salary := NULL]
 ```
 
 #### a) train two random forest models: one with mtry = 2 and another with mtry = 10 (use the whole dataset and don’t use cross-validation). Inspect variable importance profiles. What do you see in terms of how important the first few variables are relative to each other?
-#### b) One of them is more extreme in terms of how the most important and the next ones relate to each other. Give an intuitive explanation how mtry relates to relative importance of variables in random forest models.
+
+```{r}
+train_Control <- trainControl(method = "none")
+
+set.seed(93)
+rf_2_fit <- train(log_salary ~ .,
+                   data = data,
+                   method = "rf",
+                   trControl = train_Control,
+                   ntree = 250,
+                   tuneGrid = data.frame(mtry = 2),
+                   importance = T)
+
+set.seed(93)
+rf_10_fit <- train(log_salary ~ .,
+                   data = data,
+                   method = "rf",
+                   trControl = train_Control,
+                   ntree = 250,
+                   tuneGrid = data.frame(mtry = 10),
+                   importance = T)
+```
+
+```{r, fig.width=10, fig.height = 5, fig.align='center'}
+p1 <- varImp(rf_2_fit) %>%
+  ggplot() +
+  labs(title = "RF Variance importance plot - mtry = 2")
+
+p2 <- varImp(rf_10_fit) %>%
+  ggplot(aes(color = "blue")) +
+  labs(title = "RF Variance importance plot - mtry = 10")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+What intersting to see is that the most important features are shared between both models - however, the rankings are slightly different.  
+For the mtry = 10 model, the decrease in importance by each variable is more apparent.  
+I believe both of these are due to a common denominator, on which I'll expand in the next question.  
+
+
+#### b) One of them is more extreme in terms of how the most important and the next ones relate to each other. Give an intuitive explanation how mtry relates to relative importance of variables in random forest models.  
+  
+As mentioned above, the mtry = 10 model has a more extreme decrease in relative variable importances.  
+  
+Let's take a look at those variables, and their relationship to log_salary:  
+```{r, fig.width=12, fig.height = 4, fig.align='center'}
+p1 <- data %>%
+  ggplot(aes(x = CHits, y= log_salary)) +
+  geom_point() +
+  geom_smooth()
+
+p2 <- data %>%
+  ggplot(aes(x = CAtBat, y= log_salary)) +
+  geom_point() +
+  geom_smooth()
+
+p3 <- data %>%
+  ggplot(aes(x = CAtBat, y= CHits)) +
+  geom_point() +
+  geom_smooth()
+
+grid.arrange(p1, p2, p3, ncol = 3)
+```  
+
+As we can see, it's very similar!   
+The third graph is actually CAtBat and CHits plotted against each other - likely no surprise there, they are very highly correlated.  
+  
+So what does this mean for mtry and variance importances?  
+In case we have a set of variables that are highly correlated, they will carry similar predictive power against the target.  
+With lower mtry, at every step we are using a smaller set of randomly selected predictors. mtry = 2 is an extreme version of that. As the 2 variables are selected at random, with enough trees, there is a chance that the highly correlated variables will all have similar importances.  
+  
+Now let's consider what happens when mtry = 10. In this case, at every step, there are many variables included in the best-split search.  
+Hence, there is a bigger chance that the "actual best" is available for selections as well.  
+What will happen then, is that the one with most predictive power (even if the edge is small compared to others) will gain importance as well.  
+At the end, the likely outcome is that variables with stronger predictive power will gain larger edges, compared to the more "random" case of mtry = 2.  
+
 #### c) In the same vein, estimate two gbm models and set bag.fraction to 0.1 first and to 0.9 in the second.
 ##### The tuneGrid should consist of the same values for the two models (a dataframe with one row):  
 #####     • n.trees = 500  
 #####     • interaction.depth = 5  
 #####     • shrinkage = 0.1  
-#####     • n.minobsinnode = 5  
+#####     • n.minobsinnode = 5
+
+```{r}
+tune_Grid <- data.frame(n.trees = 500,
+                       interaction.depth = 5,
+                       shrinkage = 0.1,
+                       n.minobsinnode = 5)
+
+set.seed(93)
+gbm_0.1_fit <- train(log_salary ~ .,
+                     data = data,
+                     method = "gbm",
+                     trControl = train_Control,
+                     bag.fraction = 0.1,
+                     tuneGrid = tune_Grid,
+                     verbose = F)
+
+set.seed(93)
+gbm_0.9_fit <- train(log_salary ~ .,
+                     data = data,
+                     method = "gbm",
+                     trControl = train_Control,
+                     bag.fraction = 0.9,
+                     tuneGrid = tune_Grid,
+                     verbose = F)
+```
+
+
 ##### Compare variable importance plots for the two models. What is the meaning of bag.fraction? Based on this, why is one variable importance profile more extreme than the other?  
+
+```{r, fig.width=10, fig.height = 5, fig.align='center'}
+p1 <- varImp(gbm_0.1_fit) %>%
+  ggplot() +
+  labs(title = "GBM Variance importance plot,\n bag.fraction = 0.1")
+
+p2 <- varImp(gbm_0.9_fit) %>%
+  ggplot() +
+  labs(title = "GBM Variance importance plot,\n bag.fraction = 0.9")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+bag.fraction is the control for randomness in gbm - it sets the subsampling rate p, where p * N datapoints will be selected from the set to train the next tree at each step.  
+  
+What we see in the plots is that with a low subsampling rate, the differences between each variable are small, and also the order is different comparedt to what we've seen with RF.  
+With bag.fraction = 0.9, the two main variables (in this order, with a large difference in magnitude) are the same as before, CAtBat and CHits.  
+  
+The narrative is similar to the RF case - the first model is trained with a large dose of randomness, as the training subsample for each tree is small (10% of 263 observations, bootstrapped). The likely outcome is that the model is not able to do a good job with prediction, and hence it's hard to separate noise from signal with variable importances.  
+  
+In the second case, the results are a lot less random (bigger training subsample is used), hence the variable importances are more easily separatable, with likely better predictions.  
+
