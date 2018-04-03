@@ -230,12 +230,61 @@ Data splits are still available for exercise 1.
 
 ##### a) Build at least 4 models of different families using cross validation, keeping cross validated predictions.  
 
+```{r}
+glm_model           <- h2o.glm(
+                            X, y,
+                            training_frame = data_train,
+                            family = "binomial",
+                            alpha = 1, 
+                            lambda_search = TRUE,
+                            seed = 123,
+                            nfolds = 5, 
+                            keep_cross_validation_predictions = TRUE
+                          )
+
+rpart_model         <- h2o.gbm(
+                            X, y,
+                            training_frame = data_train,
+                            ntrees = 1, 
+                            max_depth = 10, 
+                            learn_rate = 0.1, 
+                            seed = 123,
+                            nfolds = 5,
+                            keep_cross_validation_predictions = TRUE
+                          )
+
+gbm_model           <- h2o.gbm(
+                            X, y,
+                            training_frame = data_train,
+                            ntrees = 200, 
+                            max_depth = 10, 
+                            learn_rate = 0.1, 
+                            seed = 123,
+                            nfolds = 5,
+                            keep_cross_validation_predictions = TRUE
+                          )
+
+deeplearning_model  <- h2o.deeplearning(
+                            X, y,
+                            training_frame = data_train,
+                            hidden = c(32, 8),
+                            seed = 123,
+                            nfolds = 5, 
+                            keep_cross_validation_predictions = TRUE
+                          )
+```
+
+
 ##### b) Evaluate validation set performance of each model.  
+
+```{r}
+print(h2o.auc(h2o.performance(glm_model, newdata = data_test)))
+```
+
 
 ##### c) How large are the correlations of predicted scores of the validation set produced by the base learners?  
 
 ##### d) Create a stacked ensemble model from the base learners. Experiment with at least two different ensembling meta learners.  
-
 
 ##### e) Evaluate ensembles on validation set. Did it improve prediction?  
 
