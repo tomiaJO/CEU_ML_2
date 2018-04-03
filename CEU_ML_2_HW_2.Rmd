@@ -79,7 +79,7 @@ data <- as.h2o(data)
 ```
 
 
-### 1. Deep learning with h2o (7 points)
+#### 1. Deep learning with h2o (7 points)
 ##### Please for all models you are building, use reproducible = TRUE option so that conclusions that you draw are not dependent on the particular run of your models. Also, please set the same seed.  
 
 ##### a) Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts.  
@@ -113,10 +113,6 @@ rf_grid <- h2o.grid(x = X,
                     seed = 123,
                     hyper_params = rf_params)
 ```
-```{r}
-h2o.getGrid(grid_id = rf_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
-```
-
 
 ##### c) Build deep learning models. Experiment with parameter settings regarding  
 
@@ -129,6 +125,7 @@ h2o.getGrid(grid_id = rf_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
 For all models, supply the validation_frame and use AUC as a stopping metric.  
 Present different model versions and evaluate them on the validation set. Which one performs the best?  
 
+For this exercise, I had to slice up the search grid into two (hyperparams_1 & 2) for runtime consideration (also the tried ranges for parameters are quite limited). This probably creates an under-optimal performance for the DL models.
 ```{r}
 # dl_grid <- h2o.deeplearning(X, y, 
 #                             training_frame = data_train,
@@ -170,12 +167,76 @@ dl_grid_2 <- h2o.grid(
                   validation_frame = data_valid,
                   seed = 123
                   )
+```
 
-h2o.getGrid(grid_id = dl_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
+Version for different settings (commented out for now as prints too much):
+```{r}
+# h2o.getGrid(grid_id = rf_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
+# h2o.getGrid(grid_id = dl_grid_1@grid_id, sort_by = "AUC", decreasing = TRUE)
+# h2o.getGrid(grid_id = dl_grid_2@grid_id, sort_by = "AUC", decreasing = TRUE)
 ```
 
 
 ##### d) How does your best model compare to the benchmark model on the test set?  
 
+Let's extract the best models first from the grids:
+```{r}
+dl_model_1  <- h2o.getModel(h2o.getGrid(dl_grid_1@grid_id)@model_ids[[1]])
+dl_model_2  <- h2o.getModel(h2o.getGrid(dl_grid_2@grid_id)@model_ids[[1]])
+```
+
+Best model AUC from the first set of parameters:
+```{r}
+print(h2o.auc(h2o.performance(dl_model_1, newdata = data_valid)))
+```
+
+Best model AUC from the second set of parameters:
+```{r}
+print(h2o.auc(h2o.performance(dl_model_2, newdata = data_valid)))
+```
+
+The results from the first set are slighlty better (although, realistically they are virtually the same), so I'm going to use that for comparison against the benchmark.  
+  
+
+DL's performance on the test set:
+```{r}
+h2o.auc(h2o.performance(dl_model_1, newdata = data_test))
+```
+
+Performance of the benchmark RF model on the test set:
+```{r}
+rf_model  <- h2o.getModel(h2o.getGrid(rf_grid@grid_id)@model_ids[[1]])
+h2o.auc(h2o.performance(rf_model, newdata = data_test))
+```
+
+A bit surprisingly for me, the model that comes out on top is the DL one (with the first parameter set).  
+The performance is a tiny bit better than RF had on the test set, while DL was very consistent across the three dataset's (performance on the training set was also around 0.706 in terms of AUC).  
+  
 ##### e) Evaluate the model that performs best based on the validation set on the test set.  
 
+```{r}
+h2o.performance(dl_model_1, newdata = data_test)
+```
+
+Results are mixed - accuracy is not actually far from what we would get by just random guessing based on base probabilities.  
+
+~ 0.7 AUC however is definitely a good uplift for random guessing, and it's in the ballpark of what we could achieve with the potentially more "appropriate" model (for this problem) in ML1 HW2 with glmnet.
+
+#### 2. Stacking with h2o (6 points)  
+
+##### Take the same problem and data splits.  
+
+Data splits are still available for exercise 1.
+
+##### a) Build at least 4 models of different families using cross validation, keeping cross validated predictions.  
+
+##### b) Evaluate validation set performance of each model.  
+
+##### c) How large are the correlations of predicted scores of the validation set produced by the base learners?  
+
+##### d) Create a stacked ensemble model from the base learners. Experiment with at least two different ensembling meta learners.  
+
+
+##### e) Evaluate ensembles on validation set. Did it improve prediction?  
+
+##### f) Evaluate the best performing model on the test set. How does performance compare to that of the validation set?  
