@@ -1,0 +1,181 @@
+---
+title: "Machine Learning 2 -  Homework 2"
+author: "Tamas Koncz"
+date: '2018-04-03'
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    df_print: paged
+---
+
+```{r, include = FALSE}
+library(data.table)
+library(dplyr)
+library(gridExtra)
+library(h2o)
+
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+options(scipen = 999)
+```
+
+```{r}
+data <- fread("no-show-data.csv")
+# data <- fread("../../data/medical-appointments-no-show/no-show-data.csv")
+
+# some data cleaning
+data[, c("PatientId", "AppointmentID", "Neighbourhood") := NULL]
+setnames(data,
+         c("No-show",
+           "Age",
+           "Gender",
+           "ScheduledDay",
+           "AppointmentDay",
+           "Scholarship",
+           "Hipertension",
+           "Diabetes",
+           "Alcoholism",
+           "Handcap",
+           "SMS_received"),
+         c("no_show",
+           "age",
+           "gender",
+           "scheduled_day",
+           "appointment_day",
+           "scholarship",
+           "hypertension",
+           "diabetes",
+           "alcoholism",
+           "handicap",
+           "sms_received"))
+
+# for binary prediction, the target variable must be a factor
+data[, no_show := factor(no_show, levels = c("Yes", "No"))]
+data[, handicap := ifelse(handicap > 0, 1, 0)]
+
+# create new variables
+data[, gender := factor(gender)]
+
+data[, scholarship := factor(scholarship)]
+data[, hypertension := factor(hypertension)]
+data[, alcoholism := factor(alcoholism)]
+data[, handicap := factor(handicap)]
+data[, scheduled_day := as.Date(scheduled_day)]
+data[, appointment_day := as.Date(appointment_day)]
+data[, days_since_scheduled := as.integer(appointment_day - scheduled_day)]
+
+# clean up a little bit
+data <- data[age %between% c(0, 95)]
+data <- data[days_since_scheduled > -1]
+data[, c("scheduled_day", "appointment_day", "sms_received") := NULL]
+```
+
+```{r}
+h2o.init()
+data <- as.h2o(data)
+```
+
+
+### 1. Deep learning with h2o (7 points)
+##### Please for all models you are building, use reproducible = TRUE option so that conclusions that you draw are not dependent on the particular run of your models. Also, please set the same seed.  
+
+##### a) Create train / validation / test sets, cutting the data into 5% - 45% - 50% parts.  
+
+```{r}
+splitted_data <- h2o.splitFrame(data, 
+                                ratios = c(0.05, 0.45), 
+                                seed = 123)
+
+data_train <- splitted_data[[1]]
+data_valid <- splitted_data[[2]]
+data_test <- splitted_data[[3]]
+```
+
+
+##### b) Train a benchmark model of your choice using h2o (such as random forest, gbm or glm) and evaluate it on the validation set.  
+
+Let's train a basic RF model, with 500 trees and a grid search over a few possible values for mtry (# of parameters to chose from randomly at splitting):
+```{r}
+y <- "no_show"
+X <- setdiff(names(data), y)
+
+rf_params <- list(ntrees = c(500),
+                  mtries = c(2, 3, 5))
+
+rf_grid <- h2o.grid(x = X, 
+                    y = y, 
+                    training_frame = data_train, 
+                    algorithm = "randomForest", 
+                    nfolds = 5,
+                    seed = 123,
+                    hyper_params = rf_params)
+```
+```{r}
+h2o.getGrid(grid_id = rf_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
+```
+
+
+##### c) Build deep learning models. Experiment with parameter settings regarding  
+
+• network topology (varying number of layers and nodes within layers)  
+• activation function  
+• dropout (both hidden and input layers)  
+• lasso, ridge regularization  
+• early stopping (changing stopping rounds, tolerance) and number of epochs  
+
+For all models, supply the validation_frame and use AUC as a stopping metric.  
+Present different model versions and evaluate them on the validation set. Which one performs the best?  
+
+```{r}
+# dl_grid <- h2o.deeplearning(X, y, 
+#                             training_frame = data_train,
+#                             reproducible = TRUE, # needed in deeplearning for full reproducibility
+#                             seed = 123)
+
+hyperparams_1 <- list(
+                  activation = c("TanhWithDropout", "RectifierWithDropout"),
+                  input_dropout_ratio = c(0, 0.15),
+                  hidden_dropout_ratios = list(c(0, 0), c(0.15, 0.15)),
+                  hidden = list(c(32, 32), c(50, 50))
+                  )
+
+hyperparams_2 <- list(
+                  l1 = c(0, 0.05),
+                  l2 = c(0, 0.05),
+                  epochs = c(6, 8),
+                  stopping_rounds = c(2, 4)
+                  )
+
+dl_grid_1 <- h2o.grid(
+                  x=X, y=y,
+                  algorithm = "deeplearning",
+                  reproducible = TRUE,
+                  stopping_metric = "AUC",
+                  hyper_params = hyperparams_1,
+                  training_frame = data_train,
+                  validation_frame = data_valid,
+                  seed = 123
+                  )
+
+dl_grid_2 <- h2o.grid(
+                  x=X, y=y,
+                  algorithm = "deeplearning",
+                  reproducible = TRUE,
+                  stopping_metric = "AUC",
+                  hyper_params = hyperparams_2,
+                  training_frame = data_train,
+                  validation_frame = data_valid,
+                  seed = 123
+                  )
+
+h2o.getGrid(grid_id = dl_grid@grid_id, sort_by = "AUC", decreasing = TRUE)
+```
+
+
+##### d) How does your best model compare to the benchmark model on the test set?  
+
+##### e) Evaluate the model that performs best based on the validation set on the test set.  
+
