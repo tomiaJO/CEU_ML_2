@@ -12,7 +12,7 @@ output:
 ```{r, include = FALSE}
 library(data.table)
 library(dplyr)
-library(gridExtra)
+library(GGally)
 library(h2o)
 
 library(knitr)
@@ -277,15 +277,78 @@ deeplearning_model  <- h2o.deeplearning(
 
 ##### b) Evaluate validation set performance of each model.  
 
+Let's see the AUC for each model on the validation set:
 ```{r}
-print(h2o.auc(h2o.performance(glm_model, newdata = data_test)))
+print(paste("glm:"  , round(h2o.auc(h2o.performance(glm_model,          newdata = data_valid)), 3)))
+print(paste("rpart:", round(h2o.auc(h2o.performance(rpart_model,        newdata = data_valid)), 3)))
+print(paste("gbm:"  , round(h2o.auc(h2o.performance(gbm_model,          newdata = data_valid)), 3)))
+print(paste("dl:"   , round(h2o.auc(h2o.performance(deeplearning_model, newdata = data_valid)), 3)))
 ```
 
 
 ##### c) How large are the correlations of predicted scores of the validation set produced by the base learners?  
 
-##### d) Create a stacked ensemble model from the base learners. Experiment with at least two different ensembling meta learners.  
+```{r}
+predictions <- data.table(
+  "glm"   = as.data.frame(h2o.predict(glm_model,           newdata = data_test)$Y)$Y,
+  "rpart" = as.data.frame(h2o.predict(rpart_model,         newdata = data_test)$Y)$Y,
+  "gbm"   = as.data.frame(h2o.predict(gbm_model,           newdata = data_test)$Y)$Y,
+  "dl"    = as.data.frame(h2o.predict(deeplearning_model,  newdata = data_test)$Y)$Y
+)
+
+ggcorr(predictions, label = TRUE, label_round = 2)
+```
+
+Correlations vary across models - not surprisingly, it's highest between the tree-based methods.
+It's also significant between glm and dl (and between dl and the other two methods as well).
+
+##### d) Create a stacked ensemble model from the base learners. Experiment with at least two different ensembling meta learners. 
+
+Let's start with the base glm:
+```{r}
+ensemble_model_glm <- h2o.stackedEnsemble(
+                              X, y,
+                              training_frame = data_train,
+                              metalearner_algorithm = "glm",
+                              base_models = list(glm_model,
+                                                 rpart_model,
+                                                 gbm_model,
+                                                 deeplearning_model))
+```
+
+And then try an rf-based ensemble as well:
+```{r}
+ensemble_model_rf  <- h2o.stackedEnsemble(
+                              X, y,
+                              training_frame = data_train,
+                              metalearner_algorithm = "drf",
+                              base_models = list(glm_model,
+                                                 rpart_model,
+                                                 gbm_model,
+                                                 deeplearning_model))
+```
 
 ##### e) Evaluate ensembles on validation set. Did it improve prediction?  
 
+Based on AUCs:
+```{r}
+print(paste("glm ensemble:" , round(h2o.auc(h2o.performance(ensemble_model_glm,  newdata = data_valid)), 3)))
+print(paste("rf ensemble:"  , round(h2o.auc(h2o.performance(ensemble_model_rf,   newdata = data_valid)), 3)))
+```
+
+Well, the glm version did - not by very much, but still the difference is significant enough to call it.
+RF performed worse than most models.. Maybe random selection hurt in this case?
+
 ##### f) Evaluate the best performing model on the test set. How does performance compare to that of the validation set?  
+
+AUC on the test set, for the glm ensemble:
+```{r}
+print(paste("glm ensemble:" , round(h2o.auc(h2o.performance(ensemble_model_glm,  newdata = data_test)), 3)))
+```
+
+The result is close enough to call it an even performance. The 0.711 AUC by the glm ensemble is still better than what we've seen by any other model on the validation sets earlier.
+
+```{r}
+sessionInfo()
+```
+
